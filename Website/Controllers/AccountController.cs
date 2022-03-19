@@ -13,19 +13,25 @@ using Microsoft.AspNet.Identity.Owin;
 using Microsoft.Owin.Security;
 using Microsoft.Owin.Security.Cookies;
 using Microsoft.Owin.Security.OAuth;
+using Website.EFModel;
 using Website.Models;
 using Website.Providers;
 using Website.Results;
+using System.Web.Http.Cors;
+using System.Linq;
+using System.Data.Entity;
 
 namespace Website.Controllers
 {
     [Authorize]
     [RoutePrefix("api/Account")]
+    [EnableCors(origins: "*", headers: "*", methods: "*")]
     public class AccountController : ApiController
     {
         private const string LocalLoginProvider = "Local";
         private ApplicationUserManager _userManager;
         ApplicationDbContext context;
+
         public AccountController()
         {
             context = new ApplicationDbContext();
@@ -137,22 +143,130 @@ namespace Website.Controllers
 
         // POST api/Account/SetPassword
         [Route("SetPassword")]
-        public async Task<IHttpActionResult> SetPassword(SetPasswordBindingModel model)
+        [AllowAnonymous]
+        public async Task<HttpResponseModel> SetPassword(SetPasswordBindingModel model)
         {
+            try
+            {
+                string Message = string.Empty;
+                if (!ModelState.IsValid)
+                {
+                    Message = string.Join(" | ", ModelState.Values
+                    .SelectMany(v => v.Errors)
+                    .Select(e => e.ErrorMessage));
+                    return new HttpResponseModel { Status = 400, Message = Message };
+                }
+
+                IdentityResult result = await UserManager.AddPasswordAsync(model.UserID, model.NewPassword);
+                if (!result.Succeeded)
+                {
+                    return new HttpResponseModel { Status = 400, Message = string.Join(" | ", result.Errors ) };
+                }
+
+                using (context = new ApplicationDbContext())
+                {
+                    var user = context.Users.SingleOrDefault(b => b.Id == model.UserID);
+                    if (user != null)
+                    {
+                        user.IsSetPassword = true;
+                        context.SaveChanges();
+                    }
+                }
+
+                return new HttpResponseModel { Status = 200, Message = "Password created successfully" };
+            }
+            catch (Exception ex)
+            {
+                Log.LogException(ex);
+                return new HttpResponseModel { Status = 400, Message = ex.Message };
+            }
+        }
+
+        // POST api/Account/VerifyEmail
+        [Route("VerifyEmail")]
+        [AllowAnonymous]
+        public async Task<HttpResponseModel> VerifyEmail(VerifyEmailConfirmation model)
+        {
+            string Message = string.Empty;
             if (!ModelState.IsValid)
             {
-                return BadRequest(ModelState);
+                Message = string.Join(" | ", ModelState.Values
+                    .SelectMany(v => v.Errors)
+                    .Select(e => e.ErrorMessage));
+                return new HttpResponseModel { Status = 400, Message = Message };
             }
 
-            IdentityResult result = await UserManager.AddPasswordAsync(User.Identity.GetUserId(), model.NewPassword);
-
-            if (!result.Succeeded)
+            var user = context.Users.Where(x => x.Id == model.UserId).FirstOrDefault();
+            var emailConfirmationResult = await UserManager.ConfirmEmailAsync(model.UserId, model.Token);
+            if (emailConfirmationResult.Succeeded)
             {
-                return GetErrorResult(result);
+                Message = "Email is confirmed";
             }
 
-            return Ok();
+            return new HttpResponseModel { Status = 200, Message = Message, Data = new { IsSetPassword = user.IsSetPassword, Email = user.Email } };
         }
+
+        [Route("ForgotPassword")]
+        [AllowAnonymous]
+        public async Task<HttpResponseModel> ForgotPassword(ForgotPasswordModel forgotPasswordModel)
+        {
+            try
+            {
+                if (!ModelState.IsValid)
+                    return new HttpResponseModel { Status = 500, Message = "Something went wrong, please try again later" };
+
+                var user = await UserManager.FindByEmailAsync(forgotPasswordModel.Email);
+                if (user == null)
+                    return new HttpResponseModel { Status = 400, Message = "User is not available" };
+
+                var token = await UserManager.GeneratePasswordResetTokenAsync(user.Id);
+                List<WordsToReplace> wtr = new List<WordsToReplace> {
+                    new WordsToReplace { FileWord = "{Name}", Replacement = user.Firstname },
+                    new WordsToReplace { FileWord = "{URL}", Replacement = HttpContext.Current.Request.Url.Host + @"/ResetPassword?userId="+ user.Id + "&token="+token },
+                    new WordsToReplace { FileWord = "{Year}", Replacement = DateTime.Now.Year.ToString() }
+                };
+
+                var htmlBody = ReadFile.UpdateHtmlFile("Forgot-Password-Email-Template.html", wtr);
+                SmtpProvider.SendEmail(user.Email, "Reset your account password", htmlBody);
+
+                return new HttpResponseModel { Status = 200, Message = "Password reset email sent successfully" };
+            }
+            catch (Exception ex)
+            {
+                Log.LogException(ex);
+                return new HttpResponseModel { Status = 200, Message = ex.Message };
+            }
+            
+        }
+
+        [Route("ResetPassword")]
+        [AllowAnonymous]
+        public async Task<HttpResponseModel> ResetPassword(ResetPasswordModel resetPasswordModel)
+        {
+            try
+            {
+                if (!ModelState.IsValid)
+                    return new HttpResponseModel { Status = 500, Message = "Something went wrong, please try again later" };
+
+                var user = await UserManager.FindByIdAsync(resetPasswordModel.UserId);
+                if (user == null)
+                    return new HttpResponseModel { Status = 400, Message = "User is not available" };
+
+                var resetPassResult = await UserManager.ResetPasswordAsync(user.Id, resetPasswordModel.Token, resetPasswordModel.Password);
+                if (!resetPassResult.Succeeded)
+                {
+                    return new HttpResponseModel { Status = 400, Message = "Password and confirm password do not match" };
+                }
+                return new HttpResponseModel { Status = 200, Message = "Password reset successfully" };
+            }
+            catch (Exception ex)
+            {
+                Log.LogException(ex);
+                return new HttpResponseModel { Status = 200, Message = ex.Message };
+            }
+            
+        }
+
 
         // POST api/Account/AddExternalLogin
         [Route("AddExternalLogin")]
@@ -322,29 +436,79 @@ namespace Website.Controllers
         // POST api/Account/Register
         [AllowAnonymous]
         [Route("Register")]
-        public async Task<IHttpActionResult> Register(RegisterBindingModel model)
+        public async Task<HttpResponseModel> Register(RegisterBindingModel model)
         {
             try
             {
                 if (!ModelState.IsValid)
                 {
-                    return BadRequest(ModelState);
+                    return new HttpResponseModel { Status = 400, Message = "Please fill appropriate fields"};
                 }
-                var user = new ApplicationUser() { UserName = model.Email, Email = model.Email };
-                IdentityResult result = await UserManager.CreateAsync(user, model.Password);
+                if (UserManager.FindByEmail(model.Email) != null)
+                {
+                    return new HttpResponseModel { Status = 400, Message = "User already exists" };
+                }
+                var user = new ApplicationUser()
+                {
+                    UserName = model.Email,
+                    Email = model.Email,
+                    Firstname = model.Firstname,
+                    Lastname = model.Lastname,
+                    CountryId = model.CountryID
+                };
+                IdentityResult result = await UserManager.CreateAsync(user);
+                await SendConfirmation(new EmailConfirmationModel { UserID = user.Id });
                 await this.UserManager.AddToRoleAsync(user.Id, model.UserRoles);
 
                 if (!result.Succeeded)
                 {
-                    return GetErrorResult(result);
+                    Log.LogString("Something went wrong, please try again later");
+                    return new HttpResponseModel { Status = 500, Message = GetErrorResult(result).ToString() };
                 }
+
+                return new HttpResponseModel
+                {
+                    Status = 200,
+                    Message = "Successfully created.",
+                    Data = new
+                    {
+                        UserID = user.Id,
+                        Email = user.Email
+                    }
+                };
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                return GetErrorResult(IdentityResult.Failed());
+                Log.LogException(ex);
+                return new HttpResponseModel { Status = 500, Message = ex.Message };
             }
-            
-            return Ok();
+        }
+
+        [AllowAnonymous]
+        [Route("SendEmailConfirmation")]
+        public async Task<HttpResponseModel> SendConfirmation(EmailConfirmationModel model)
+        {
+            try
+            {
+                var user = await UserManager.FindByIdAsync(model.UserID);
+                var confirmationToken = await UserManager.GenerateEmailConfirmationTokenAsync(model.UserID);
+
+                List<WordsToReplace> wtr = new List<WordsToReplace> {
+                    new WordsToReplace { FileWord = "{Name}", Replacement = user.Firstname },
+                    new WordsToReplace { FileWord = "{URL}", Replacement = HttpContext.Current.Request.Url.Host + @"/SetPassword?userId="+ user.Id + "&token="+confirmationToken },
+                    new WordsToReplace { FileWord = "{Year}", Replacement = DateTime.Now.Year.ToString() }
+                };
+
+                var htmlBody = ReadFile.UpdateHtmlFile("Confirm-Email-Template.html", wtr);
+                SmtpProvider.SendEmail(user.Email, "Please Confirm you email and set your password", htmlBody);
+            }
+            catch (Exception ex)
+            {
+                Log.LogException(ex);
+                return new HttpResponseModel { Status = 500, Message = ex.Message };
+            }
+
+            return new HttpResponseModel { Status = 200, Message = "Successfully email sent" };            
         }
 
         // POST api/Account/RegisterExternal

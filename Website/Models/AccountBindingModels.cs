@@ -32,22 +32,41 @@ namespace Website.Models
         public string ConfirmPassword { get; set; }
     }
 
+    public class EmailConfirmationModel
+    {
+        [Required]
+        [Display(Name = "User ID")]
+        public string UserID { get; set; }
+    }
+
     public class RegisterBindingModel
     {
+        [Required]
+        [Display(Name = "First name")]
+        public string Firstname { get; set; }
+
+        [Required]
+        [Display(Name = "Last name")]
+        public string Lastname { get; set; }
+
         [Required]
         [Display(Name = "Email")]
         public string Email { get; set; }
 
         [Required]
-        [StringLength(100, ErrorMessage = "The {0} must be at least {2} characters long.", MinimumLength = 6)]
-        [DataType(DataType.Password)]
-        [Display(Name = "Password")]
-        public string Password { get; set; }
+        [Display(Name = "Country")]
+        public int CountryID { get; set; }
 
-        [DataType(DataType.Password)]
-        [Display(Name = "Confirm password")]
-        [Compare("Password", ErrorMessage = "The password and confirmation password do not match.")]
-        public string ConfirmPassword { get; set; }
+        //[Required]
+        //[StringLength(100, ErrorMessage = "The {0} must be at least {2} characters long.", MinimumLength = 6)]
+        //[DataType(DataType.Password)]
+        //[Display(Name = "Password")]
+        //public string Password { get; set; }
+
+        //[DataType(DataType.Password)]
+        //[Display(Name = "Confirm password")]
+        //[Compare("Password", ErrorMessage = "The password and confirmation password do not match.")]
+        //public string ConfirmPassword { get; set; }
 
         [Required]
         [Display(Name = "UserRoles")]
@@ -72,8 +91,23 @@ namespace Website.Models
         public string ProviderKey { get; set; }
     }
 
+    public class VerifyEmailConfirmation
+    {
+        [Required]
+        [Display(Name = "User Id")]
+        public string UserId { get; set; }
+
+        [Required]
+        [Display(Name = "Email Confirmation Token")]
+        public string Token { get; set; }
+    }
+
     public class SetPasswordBindingModel
     {
+        [Required]
+        [Display(Name = "User ID")]
+        public string UserID { get; set; }
+
         [Required]
         [StringLength(100, ErrorMessage = "The {0} must be at least {2} characters long.", MinimumLength = 6)]
         [DataType(DataType.Password)]
@@ -84,5 +118,29 @@ namespace Website.Models
         [Display(Name = "Confirm new password")]
         [Compare("NewPassword", ErrorMessage = "The new password and confirmation password do not match.")]
         public string ConfirmPassword { get; set; }
+    }
+
+    public class ForgotPasswordModel
+    {
+        [Required]
+        [EmailAddress]
+        public string Email { get; set; }
+    }
+
+    public class ResetPasswordModel
+    {
+        [Required]
+        [DataType(DataType.Password)]
+        public string Password { get; set; }
+
+        [DataType(DataType.Password)]
+        [Compare("Password", ErrorMessage = "The password and confirmation password do not match.")]
+        public string ConfirmPassword { get; set; }
+
+        [Required]
+        public string UserId { get; set; }
+
+        [Required]
+        public string Token { get; set; }
     }
 }
